@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw, ImageFont
 import requests
 import io
 import os
+import asyncio
 
 # Configurazione Bot
 TOKEN = os.getenv("TOKEN")
@@ -11,16 +12,18 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Dizionario per tracciare i comandi in corso e bloccare i duplicati di Railway
+active_requests = {}
+
 def get_jartex_stats(username):
     try:
         api_url = f"https://stats.jartexnetwork.com/api/profile/{username}"
-        response = requests.get(api_url, timeout=12)
+        response = requests.get(api_url, timeout=10)
         if response.status_code != 200: return None
         data = response.json()
         
         clan = data.get("clan", {})
         owner_data = clan.get("owner", "N/A")
-        # Pulizia nome leader se arriva come oggetto
         owner_name = owner_data.get("username", "N/A") if isinstance(owner_data, dict) else owner_data
 
         return {
@@ -31,7 +34,6 @@ def get_jartex_stats(username):
             "clan_owner": owner_name,
             "clan_members": clan.get("membersCount", 0),
             "friends": len(data.get("friends", [])),
-            # Statistiche reali o simulate
             "wins": 356, "losses": 82, "wlr": 4.34,
             "kills": 2441, "deaths": 1152, "fkdr": 14.0,
             "beds_b": 507, "ws": 47
@@ -40,14 +42,11 @@ def get_jartex_stats(username):
 
 def create_card(stats):
     try:
-        # Carica lo sfondo personalizzato
         base = Image.open("sfondo.png").convert("RGBA")
-        
-        # Overlay box scuri (Glassmorphism)
         overlay = Image.new("RGBA", base.size, (0,0,0,0))
         d_ov = ImageDraw.Draw(overlay)
-        d_ov.rectangle([40, 115, 610, 470], fill=(0, 0, 0, 110)) # Box stats
-        d_ov.rectangle([640, 255, 980, 470], fill=(0, 0, 0, 150)) # Box clan
+        d_ov.rectangle([40, 115, 610, 470], fill=(0, 0, 0, 110)) 
+        d_ov.rectangle([640, 255, 980, 470], fill=(0, 0, 0, 150)) 
         base = Image.alpha_composite(base, overlay)
 
         draw = ImageDraw.Draw(base)
@@ -58,28 +57,23 @@ def create_card(stats):
         
         gold, green, red, white = "#FFAA00", "#55FF55", "#FF5555", "#FFFFFF"
 
-        # TESTI INTESTAZIONE
+        # TESTI
         draw.text((50, 40), f"{stats['rank']} {stats['username']}", fill=white, font=f_header)
         draw.text((base.width - 110, 40), str(stats['level']), fill=gold, font=f_title)
 
-        # GRID STATISTICHE
-        c = [80, 270, 460]
-        r = [145, 265, 385]
+        # GRID STATS
+        c, r = [80, 270, 460], [145, 265, 385]
         stats_map = [
-            (c[0], r[0], "WINS", str(stats['wins']), green),
-            (c[1], r[0], "LOSSES", str(stats['losses']), red),
-            (c[2], r[0], "WLR", str(stats['wlr']), gold),
-            (c[0], r[1], "KILLS", str(stats['kills']), green),
-            (c[1], r[1], "DEATHS", str(stats['deaths']), red),
-            (c[2], r[1], "FKDR", str(stats['fkdr']), gold),
-            (c[0], r[2], "BEDS BROKEN", str(stats['beds_b']), green),
-            (c[2], r[2], "STREAK", str(stats['ws']), gold)
+            (c[0], r[0], "WINS", str(stats['wins']), green), (c[1], r[0], "LOSSES", str(stats['losses']), red),
+            (c[2], r[0], "WLR", str(stats['wlr']), gold), (c[0], r[1], "KILLS", str(stats['kills']), green),
+            (c[1], r[1], "DEATHS", str(stats['deaths']), red), (c[2], r[1], "FKDR", str(stats['fkdr']), gold),
+            (c[0], r[2], "BEDS BROKEN", str(stats['beds_b']), green), (c[2], r[2], "STREAK", str(stats['ws']), gold)
         ]
         for x, y, lbl, val, col in stats_map:
             draw.text((x, y), lbl, fill=col, font=f_lbl)
             draw.text((x, y+22), val, fill=white, font=f_data)
 
-        # INFO CLAN E MEMBRI
+        # CLAN INFO
         x_cl = 660
         draw.text((x_cl, 275), "INFORMATION", fill=gold, font=f_header)
         draw.text((x_cl, 315), f"Friends: {stats['friends']}", fill=white, font=f_data)
@@ -88,17 +82,16 @@ def create_card(stats):
         draw.text((x_cl, 430), f"Leader: {stats['clan_owner']}", fill=white, font=f_lbl)
         draw.text((x_cl, 455), f"Members: {stats['clan_members']}", fill=white, font=f_lbl)
 
-        # NUOVO SISTEMA SKIN (Crafatar)
+        # SKIN 3D - SERVIZIO ULTRA RAPIDO
         try:
-            skin_url = f"https://crafatar.com/renders/body/{stats['username']}?size=400&overlay"
-            s_res = requests.get(skin_url, stream=True, timeout=6)
+            # Useremo MC-Heads che è fulmineo
+            skin_url = f"https://mc-heads.net/body/{stats['username']}/400"
+            s_res = requests.get(skin_url, timeout=5)
             if s_res.status_code == 200:
                 skin_img = Image.open(io.BytesIO(s_res.content)).convert("RGBA")
                 base.paste(skin_img, (base.width - 320, 20), skin_img)
-        except:
-            print("Skin non caricata, procedo senza.")
+        except: pass
 
-        # TITOLO IN BASSO
         draw.text((base.width//2 - 170, base.height - 65), "BEDWARS TOTAL STATS", fill=gold, font=f_header)
 
         buf = io.BytesIO()
@@ -111,21 +104,37 @@ def create_card(stats):
 
 @bot.command(aliases=['bedwars'])
 async def stats(ctx, user: str):
-    # Messaggio di attesa per evitare duplicati su Railway
-    waiting = await ctx.send(f"⏳ Caricamento dati per **{user}**...")
+    user = user.lower()
     
-    data = get_jartex_stats(user)
-    if not data:
-        await waiting.delete()
-        return await ctx.send("❌ Giocatore non trovato.")
+    # Sistema Anti-Duplicato Railway
+    if active_requests.get(ctx.channel.id) == user:
+        return # Ignora se una richiesta identica è già in corso nello stesso canale
     
-    buf = create_card(data)
-    if buf:
-        await waiting.delete()
-        await ctx.send(file=discord.File(buf, f"{user}_stats.png"))
+    active_requests[ctx.channel.id] = user
+    waiting = await ctx.send(f"⏳ Generando card per **{user}**...")
+    
+    try:
+        data = get_jartex_stats(user)
+        if not data:
+            await waiting.edit(content=f"❌ Giocatore **{user}** non trovato.")
+            return
+
+        # Esegui la creazione della card in un thread separato per non bloccare il bot
+        loop = asyncio.get_event_loop()
+        buf = await loop.run_in_executor(None, create_card, data)
+        
+        if buf:
+            await waiting.delete()
+            await ctx.send(file=discord.File(buf, f"{user}_stats.png"))
+        else:
+            await waiting.edit(content="❌ Errore durante la creazione della grafica.")
+    finally:
+        # Pulisci lo stato dopo 5 secondi per permettere nuovi comandi
+        await asyncio.sleep(5)
+        active_requests.pop(ctx.channel.id, None)
 
 @bot.event
 async def on_ready():
-    print(f'✅ Bot Jartex Online come {bot.user}')
+    print(f'✅ Bot pronto: {bot.user}')
 
 bot.run(TOKEN)
