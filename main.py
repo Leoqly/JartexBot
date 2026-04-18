@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 import requests
 import io
 import os
@@ -19,120 +19,117 @@ def get_jartex_stats(username):
         data = response.json()
         
         clan = data.get("clan", {})
-        # Pulizia del nome Owner (prende solo lo username se è un dizionario)
-        owner = clan.get("owner", "N/A")
-        if isinstance(owner, dict):
-            owner = owner.get("username", "N/A")
+        owner_data = clan.get("owner", "N/A")
+        # Pulizia Owner: se è un dizionario, estraiamo solo lo username
+        owner_name = owner_data.get("username", "N/A") if isinstance(owner_data, dict) else owner_data
 
         return {
             "username": data.get("username", username),
             "level": data.get("rank", {}).get("level", 0),
             "rank": data.get("rank", {}).get("displayName", "Player"),
             "clan_name": clan.get("name", "None"),
-            "clan_owner": owner,
+            "clan_owner": owner_name,
             "clan_members": clan.get("membersCount", 0),
             "friends": len(data.get("friends", [])),
-            # Statistiche simulate (Sostituisci con logica API se disponibile)
+            # Stats (Qui puoi collegare altre API se ne hai)
             "wins": 356, "losses": 82, "wlr": 4.34,
-            "fkills": 1260, "fdeaths": 90, "fkdr": 14.00,
-            "kills": 2441, "deaths": 1152, "kdr": 2.12,
-            "beds_b": 507, "beds_l": 82, "ws": 47
+            "kills": 2441, "deaths": 1152, "fkdr": 14.0,
+            "beds_b": 507, "ws": 47
         }
-    except Exception as e:
-        print(f"Errore API: {e}")
-        return None
+    except: return None
 
 def create_card(stats):
     try:
-        # Carica sfondo (Assicurati che sia sfondo.png su GitHub)
-        img = Image.open("sfondo.png").convert("RGBA")
-        draw = ImageDraw.Draw(img)
+        # 1. Base e Overlay
+        base = Image.open("sfondo.png").convert("RGBA")
+        txt_layer = Image.new("RGBA", base.size, (0,0,0,0))
+        draw = ImageDraw.Draw(txt_layer)
         
-        # Caricamento Font
-        f_large = ImageFont.truetype("Minecraft.ttf", 40)
-        f_med = ImageFont.truetype("Minecraft.ttf", 26)
-        f_small = ImageFont.truetype("Minecraft.ttf", 18)
+        # Font (Minecraftia)
+        f_title = ImageFont.truetype("Minecraft.ttf", 45)
+        f_header = ImageFont.truetype("Minecraft.ttf", 30)
+        f_data = ImageFont.truetype("Minecraft.ttf", 24)
+        f_lbl = ImageFont.truetype("Minecraft.ttf", 16)
         
-        w, g, r, y = "white", "#74FF74", "#FF5555", "#FFFF55"
-        
-        # 1. TESTI IN ALTO
-        draw.text((45, 35), f"{stats['rank']} {stats['username']}", fill=w, font=f_med)
-        draw.text((img.width - 110, 35), str(stats['level']), fill=y, font=f_large)
+        # Colori
+        gold, green, red, white = "#FFAA00", "#55FF55", "#FF5555", "#FFFFFF"
 
-        # 2. COLONNE STATS (Area scura sinistra)
-        y_pos = [140, 250, 360] # Altezze per le 3 righe
-        
-        # Riga 1: Wins | Losses | WLR
-        draw.text((60, y_pos[0]), "Wins", fill=g, font=f_small)
-        draw.text((60, y_pos[0]+25), str(stats['wins']), fill=w, font=f_med)
-        
-        draw.text((260, y_pos[0]), "Losses", fill=r, font=f_small)
-        draw.line((260, y_pos[0]+10, 330, y_pos[0]+10), fill=r, width=2)
-        draw.text((260, y_pos[0]+25), str(stats['losses']), fill=w, font=f_med)
-        
-        draw.text((460, y_pos[0]), "WLR", fill=y, font=f_small)
-        draw.text((460, y_pos[0]+25), str(stats['wlr']), fill=g, font=f_med)
+        # 2. BOX SEMI-TRASPARENTE (Effetto Vetro per le Stats)
+        # Disegniamo un rettangolo scuro sfumato a sinistra
+        overlay = Image.new("RGBA", base.size, (0,0,0,0))
+        d_ov = ImageDraw.Draw(overlay)
+        d_ov.rectangle([30, 110, 600, 480], fill=(0, 0, 0, 80)) # Box stats
+        d_ov.rectangle([640, 250, 980, 480], fill=(0, 0, 0, 120)) # Box clan
+        base = Image.alpha_composite(base, overlay)
 
-        # Riga 2: Kills | Deaths | FKDR
-        draw.text((60, y_pos[1]), "Kills", fill=g, font=f_small)
-        draw.text((60, y_pos[1]+25), str(stats['kills']), fill=w, font=f_med)
-        
-        draw.text((260, y_pos[1]), "Deaths", fill=r, font=f_small)
-        draw.line((260, y_pos[1]+10, 330, y_pos[1]+10), fill=r, width=2)
-        draw.text((260, y_pos[1]+25), str(stats['deaths']), fill=w, font=f_med)
-        
-        draw.text((460, y_pos[1]), "FKDR", fill=y, font=f_small)
-        draw.text((460, y_pos[1]+25), str(stats['fkdr']), fill=g, font=f_med)
+        # 3. TESTI - INTESTAZIONE
+        draw.text((40, 30), f"{stats['rank']} {stats['username']}", fill=white, font=f_header)
+        draw.text((base.width - 100, 30), str(stats['level']), fill=gold, font=f_title)
 
-        # Riga 3: Beds Broken | WS
-        draw.text((60, y_pos[2]), "Beds Broken", fill=g, font=f_small)
-        draw.text((60, y_pos[2]+25), str(stats['beds_b']), fill=w, font=f_med)
-        
-        draw.text((460, y_pos[2]), "WS", fill=y, font=f_small)
-        draw.text((460, y_pos[2]+25), str(stats['ws']), fill=g, font=f_med)
+        # 4. GRIGLIA STATS (Pulita)
+        cols = [70, 260, 450]
+        rows = [150, 270, 390]
 
-        # 3. AREA INFORMAZIONI (Destra basso)
-        x_info = 660
-        draw.text((x_info, 280), "INFORMATION", fill=w, font=f_med)
-        draw.text((x_info, 310), f"Friends: {stats['friends']}", fill=w, font=f_small)
-        
-        draw.text((x_info, 360), "CLAN", fill=w, font=f_med)
-        draw.text((x_info, 390), f"Name: {stats['clan_name']}", fill=w, font=f_small)
-        draw.text((x_info, 415), f"Owner: {stats['clan_owner']}", fill=w, font=f_small)
-        draw.text((x_info, 440), f"Members: {stats['clan_members']}", fill=w, font=f_small)
+        # Riga 1
+        draw.text((cols[0], rows[0]), "WINS", fill=green, font=f_lbl)
+        draw.text((cols[0], rows[0]+25), str(stats['wins']), fill=white, font=f_data)
+        draw.text((cols[1], rows[0]), "LOSSES", fill=red, font=f_lbl)
+        draw.text((cols[1], rows[0]+25), str(stats['losses']), fill=white, font=f_data)
+        draw.text((cols[2], rows[0]), "WLR", fill=gold, font=f_lbl)
+        draw.text((cols[2], rows[0]+25), f"{stats['wlr']}", fill=white, font=f_data)
 
-        # 4. SKIN 3D (Posizionata a destra della luna)
+        # Riga 2
+        draw.text((cols[0], rows[1]), "KILLS", fill=green, font=f_lbl)
+        draw.text((cols[0], rows[1]+25), str(stats['kills']), fill=white, font=f_data)
+        draw.text((cols[1], rows[1]), "DEATHS", fill=red, font=f_lbl)
+        draw.text((cols[1], rows[1]+25), str(stats['deaths']), fill=white, font=f_data)
+        draw.text((cols[2], rows[1]), "FKDR", fill=gold, font=f_lbl)
+        draw.text((cols[2], rows[1]+25), f"{stats['fkdr']}", fill=white, font=f_data)
+
+        # Riga 3
+        draw.text((cols[0], rows[2]), "BEDS BROKEN", fill=green, font=f_lbl)
+        draw.text((cols[0], rows[2]+25), str(stats['beds_b']), fill=white, font=f_data)
+        draw.text((cols[2], rows[2]), "STREAK", fill=gold, font=f_lbl)
+        draw.text((cols[2], rows[2]+25), str(stats['ws']), fill=white, font=f_data)
+
+        # 5. BOX INFORMATION & CLAN (Destra)
+        x_cl = 660
+        draw.text((x_cl, 270), "INFORMATION", fill=gold, font=f_header)
+        draw.text((x_cl, 310), f"Friends: {stats['friends']}", fill=white, font=f_data)
+        
+        draw.text((x_cl, 365), "CLAN", fill=gold, font=f_header)
+        draw.text((x_cl, 400), f"Tag: {stats['clan_name']}", fill=white, font=f_lbl)
+        draw.text((x_cl, 425), f"Leader: {stats['clan_owner']}", fill=white, font=f_lbl)
+        draw.text((x_cl, 450), f"Members: {stats['clan_members']}", fill=white, font=f_lbl)
+
+        # 6. SKIN 3D (Posizionata perfettamente a destra della montagna)
         try:
-            skin_url = f"https://visage.surgeplay.com/full/350/{stats['username']}"
-            s_res = requests.get(skin_url, stream=True, timeout=5)
-            if s_res.status_code == 200:
-                skin_img = Image.open(io.BytesIO(s_res.content)).convert("RGBA")
-                img.paste(skin_img, (img.width - 300, 20), skin_img)
+            skin_url = f"https://visage.surgeplay.com/full/400/{stats['username']}"
+            res = requests.get(skin_url, timeout=5)
+            skin = Image.open(io.BytesIO(res.content)).convert("RGBA")
+            base.paste(skin, (base.width - 320, 0), skin)
         except: pass
 
-        # TITOLO FINALE
-        draw.text((img.width // 2 - 150, img.height - 70), "BEDWARS STATS", fill="#FF5500", font=f_large)
+        # 7. FOOTER
+        draw.text((base.width//2 - 160, base.height - 60), "BEDWARS TOTAL STATS", fill=gold, font=f_header)
 
+        # Unione finale
+        out = Image.alpha_composite(base, txt_layer)
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        out.save(buf, format="PNG")
         buf.seek(0)
         return buf
     except Exception as e:
-        print(f"Errore Card: {e}")
+        print(f"Errore: {e}")
         return None
 
 @bot.command(aliases=['bedwars'])
 async def stats(ctx, user: str):
     data = get_jartex_stats(user)
-    if not data:
-        return await ctx.send(f"❌ Utente **{user}** non trovato.")
+    if not data: return await ctx.send("❌ Player non trovato.")
     
     buf = create_card(data)
     if buf:
         await ctx.send(file=discord.File(buf, f"{user}_stats.png"))
-
-@bot.event
-async def on_ready():
-    print(f'✅ Bot Jartex Pronto!')
 
 bot.run(TOKEN)
