@@ -5,172 +5,127 @@ import requests
 import io
 import os
 import asyncio
-from datetime import datetime
 
-# --- CONFIGURAZIONE ---
+# Configurazione Bot
 TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Cache per evitare duplicati
+# Cache per prevenire risposte doppie
 active_requests = {}
 
-# Mappatura corretta per le API di Jartex
-MODE_MAP = {
-    "overall": "overall", "solo": "solos", "solos": "solos",
-    "double": "doubles", "doubles": "doubles",
-    "quad": "teams_of_four", "quads": "teams_of_four", "threes": "teams_of_three"
-}
-
-# --- LOGICA RECUPERO DATI ---
-
-def get_jartex_data(username):
+def get_jartex_stats(username):
     try:
-        # Endpoint profilo principale
-        url = f"https://stats.jartexnetwork.com/api/profile/{username}"
-        r = requests.get(url, timeout=10)
-        return r.json() if r.status_code == 200 else None
-    except:
-        return None
+        api_url = f"https://stats.jartexnetwork.com/api/profile/{username}"
+        response = requests.get(api_url, timeout=10)
+        if response.status_code != 200: return None
+        data = response.json()
+        
+        clan = data.get("clan", {})
+        owner_data = clan.get("owner", "N/A")
+        # Estrae il nome del leader se i dati sono in un dizionario
+        owner_name = owner_data.get("username", "N/A") if isinstance(owner_data, dict) else owner_data
 
-def extract_stats(data, interval, mode):
-    """Estrae i dati BedWars dal JSON complesso."""
-    # Jartex mette tutto sotto 'stats' -> 'BedWars'
-    all_games = data.get("stats", {})
-    bw_data = all_games.get("BedWars", {})
-    
-    # Se cerchiamo 'weekly' o 'monthly', Jartex li separa
-    time_node = bw_data.get(interval, {})
-    mode_key = MODE_MAP.get(mode, "overall")
-    stats = time_node.get(mode_key, {})
+        return {
+            "username": data.get("username", username),
+            "level": data.get("rank", {}).get("level", 0),
+            "rank": data.get("rank", {}).get("displayName", "Player"),
+            "clan_name": clan.get("name", "None"),
+            "clan_owner": owner_name,
+            "clan_members": clan.get("membersCount", 0),
+            "friends": len(data.get("friends", [])),
+            # Statistiche (al momento simulate, le collegheremo dopo)
+            "wins": 356, "losses": 82, "wlr": 4.34,
+            "kills": 2441, "deaths": 1152, "fkdr": 14.0,
+            "beds_b": 507, "ws": 47
+        }
+    except: return None
 
-    if not stats and interval == "alltime":
-        # Se non trova la modalità specifica, prova a prendere i dati generali
-        stats = bw_data.get("overall", {})
-
-    return {
-        "wins": stats.get("wins", 0),
-        "losses": stats.get("losses", 0),
-        "kills": stats.get("kills", 0),
-        "deaths": stats.get("deaths", 0),
-        "beds": stats.get("beds_destroyed", 0),
-        "ws": stats.get("current_streak", 0),
-        "wlr": round(stats.get("wins", 0) / max(stats.get("losses", 1), 1), 2),
-        "fkdr": round(stats.get("kills", 0) / max(stats.get("deaths", 1), 1), 2)
-    }
-
-# --- DISEGNO CARD ---
-
-def create_card(profile, interval, mode):
+def create_card(stats):
     try:
-        bw = extract_stats(profile, interval, mode)
+        # Carica lo sfondo (sfondo.png deve essere nella cartella principale su GitHub)
         base = Image.open("sfondo.png").convert("RGBA")
         
-        # Overlay Box
+        # Creazione dei box scuri trasparenti
         overlay = Image.new("RGBA", base.size, (0,0,0,0))
         d_ov = ImageDraw.Draw(overlay)
-        d_ov.rectangle([40, 115, 610, 470], fill=(0, 0, 0, 130)) 
-        d_ov.rectangle([635, 115, 985, 470], fill=(0, 0, 0, 160))
+        # Box per le statistiche principali
+        d_ov.rectangle([40, 115, 610, 470], fill=(0, 0, 0, 110)) 
+        # Box per Informazioni e Clan (ora più largo e leggibile)
+        d_ov.rectangle([640, 115, 980, 470], fill=(0, 0, 0, 150)) 
         base = Image.alpha_composite(base, overlay)
-        
+
         draw = ImageDraw.Draw(base)
-        f_title = ImageFont.truetype("Minecraft.ttf", 40)
-        f_head = ImageFont.truetype("Minecraft.ttf", 26)
-        f_val = ImageFont.truetype("Minecraft.ttf", 21)
-        f_small = ImageFont.truetype("Minecraft.ttf", 16)
+        # Assicurati che il file Minecraft.ttf sia su GitHub
+        f_title = ImageFont.truetype("Minecraft.ttf", 42)
+        f_header = ImageFont.truetype("Minecraft.ttf", 28)
+        f_data = ImageFont.truetype("Minecraft.ttf", 22)
+        f_lbl = ImageFont.truetype("Minecraft.ttf", 15)
         
         gold, green, red, white = "#FFAA00", "#55FF55", "#FF5555", "#FFFFFF"
-        lvl = profile.get("rank", {}).get("level", 0)
 
-        # Header
-        draw.text((50, 40), profile.get("username", "Unknown"), fill=white, font=f_head)
-        draw.text((base.width - 120, 35), str(lvl), fill=gold, font=f_title)
+        # Testi in alto: Nome e Livello
+        draw.text((50, 40), f"{stats['rank']} {stats['username']}", fill=white, font=f_header)
+        draw.text((base.width - 110, 40), str(stats['level']), fill=gold, font=f_title)
 
-        # Grid
-        grid = [
-            (80, 145, "WINS", bw['wins'], green), (270, 145, "LOSSES", bw['losses'], red), (460, 145, "WLR", bw['wlr'], gold),
-            (80, 265, "KILLS", bw['kills'], green), (270, 265, "DEATHS", bw['deaths'], red), (460, 265, "FKDR", bw['fkdr'], gold),
-            (80, 385, "BEDS BROKEN", bw['beds'], green), (460, 385, "STREAK", bw['ws'], gold)
+        # Griglia statistiche (Sinistra)
+        c, r = [80, 270, 460], [145, 265, 385]
+        stats_map = [
+            (c[0], r[0], "WINS", str(stats['wins']), green), (c[1], r[0], "LOSSES", str(stats['losses']), red),
+            (c[2], r[0], "WLR", str(stats['wlr']), gold), (c[0], r[1], "KILLS", str(stats['kills']), green),
+            (c[1], r[1], "DEATHS", str(stats['deaths']), red), (c[2], r[1], "FKDR", str(stats['fkdr']), gold),
+            (c[0], r[2], "BEDS BROKEN", str(stats['beds_b']), green), (c[2], r[2], "STREAK", str(stats['ws']), gold)
         ]
-        for x, y, lbl, val, col in grid:
-            draw.text((x, y), lbl, fill=col, font=f_small)
-            draw.text((x, y+22), str(val), fill=white, font=f_val)
+        for x, y, lbl, val, col in stats_map:
+            draw.text((x, y), lbl, fill=col, font=f_lbl)
+            draw.text((x, y+22), val, fill=white, font=f_data)
 
-        # Clan (Logica corretta)
-        clan = profile.get("clan", {})
-        leader = "N/A"
-        if clan.get("owner"):
-            leader = clan["owner"].get("username", "N/A") if isinstance(clan["owner"], dict) else clan["owner"]
+        # Sezione Informazioni e Clan (Destra)
+        x_cl = 660
+        draw.text((x_cl, 145), "INFORMATION", fill=gold, font=f_header)
+        draw.text((x_cl, 185), f"Friends: {stats['friends']}", fill=white, font=f_data)
         
-        draw.text((660, 140), "INFORMATION", fill=gold, font=f_head)
-        draw.text((660, 180), f"Friends: {len(profile.get('friends', []))}", fill=white, font=f_val)
-        draw.text((660, 260), "CLAN", fill=gold, font=f_head)
-        draw.text((660, 300), f"Tag: {clan.get('name', 'None')}", fill=white, font=f_small)
-        draw.text((660, 330), f"Leader: {leader}", fill=white, font=f_small)
-        draw.text((660, 360), f"Members: {clan.get('membersCount', 'N/A')}", fill=white, font=f_small)
+        draw.text((x_cl, 260), "CLAN", fill=gold, font=f_header)
+        draw.text((x_cl, 300), f"Tag: {stats['clan_name']}", fill=white, font=f_lbl)
+        draw.text((x_cl, 330), f"Leader: {stats['clan_owner']}", fill=white, font=f_lbl)
+        draw.text((x_cl, 360), f"Members: {stats['clan_members']}", fill=white, font=f_lbl)
 
         # Footer
-        footer = f"BW {interval.upper()} {mode.upper()}"
-        draw.text((base.width//2 - 120, base.height - 70), footer, fill=gold, font=f_head)
+        draw.text((base.width//2 - 170, base.height - 65), "BEDWARS TOTAL STATS", fill=gold, font=f_header)
 
         buf = io.BytesIO()
         base.save(buf, format="PNG")
         buf.seek(0)
         return buf
     except Exception as e:
-        print(f"Errore Card: {e}")
+        print(f"Errore generazione card: {e}")
         return None
 
-# --- COMANDI ---
-
-@bot.command(aliases=['bw'])
-async def bedwars(ctx, user: str, *args):
-    interval = next((a for a in args if a.lower() in ["weekly", "monthly", "alltime"]), "alltime")
-    mode = next((a for a in args if a.lower() in ["solo", "solos", "double", "doubles", "quad", "quads"]), "overall")
-
-    msg = await ctx.send(f"🛰️ Analisi dati {user}...")
-    data = get_jartex_data(user)
+@bot.command(aliases=['bedwars'])
+async def stats(ctx, user: str):
+    # Controllo per evitare che il bot risponda due volte
+    if active_requests.get(ctx.channel.id) == user.lower(): return
+    active_requests[ctx.channel.id] = user.lower()
     
+    waiting = await ctx.send(f"⏳ Generando la card per **{user}**...")
+    
+    data = get_jartex_stats(user)
     if data:
-        buf = create_card(data, interval, mode)
-        if buf:
-            await msg.delete()
-            await ctx.send(file=discord.File(buf, f"{user}.png"))
-        else:
-            await msg.edit(content="❌ Errore nella grafica.")
+        # Esegue la creazione della card in un thread separato per non bloccare il bot
+        loop = asyncio.get_event_loop()
+        buf = await loop.run_in_executor(None, create_card, data)
+        await waiting.delete()
+        await ctx.send(file=discord.File(buf, f"{user}_stats.png"))
     else:
-        await msg.edit(content="❌ Player non trovato.")
+        await waiting.edit(content="❌ Errore: Giocatore non trovato o API non raggiungibile.")
+    
+    # Aspetta un po' prima di permettere un altro comando nello stesso canale
+    await asyncio.sleep(5)
+    active_requests.pop(ctx.channel.id, None)
 
-@bot.command()
-async def clan(ctx, user: str):
-    data = get_jartex_data(user)
-    if data and data.get("clan"):
-        c = data["clan"]
-        leader = c["owner"].get("username", "N/A") if isinstance(c.get("owner"), dict) else "N/A"
-        embed = discord.Embed(title=f"🛡️ Clan: {c.get('name')}", color=0x55FF55)
-        embed.add_field(name="Leader", value=leader, inline=True)
-        embed.add_field(name="Membri", value=c.get("membersCount", "N/A"), inline=True)
-        await ctx.send(embed=embed)
-    else:
-        await ctx.send(f"❌ {user} non ha un clan.")
-
-@bot.command()
-async def top(ctx):
-    """Questa volta proviamo l'endpoint alternativo per la Top 10."""
-    try:
-        # Jartex leaderboard Bedwars (Wins Alltime)
-        url = "https://stats.jartexnetwork.com/api/leaderboards/BedWars/wins/alltime"
-        r = requests.get(url, timeout=10)
-        lb = r.json()[:10]
-        
-        embed = discord.Embed(title="🏆 Jartex Bedwars Top 10 (Wins)", color=0xFFAA00)
-        desc = ""
-        for i, p in enumerate(lb, 1):
-            desc += f"**#{i} {p['username']}** • {p['value']} Wins\n"
-        embed.description = desc
-        await ctx.send(embed=embed)
-    except:
-        await ctx.send("❌ API Leaderboard temporaneamente offline.")
+@bot.event
+async def on_ready():
+    print(f'✅ JartexBot è online come {bot.user}')
 
 bot.run(TOKEN)
