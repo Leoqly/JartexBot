@@ -19,15 +19,17 @@ def get_jartex_stats(username):
         if response.status_code != 200: return None
         data = response.json()
         
-        # Estrazione dati reali (con fallback se mancano)
+        # Estrazione dati reali dal profilo
+        clan_data = data.get("clan", {})
         return {
             "username": data.get("username", username),
             "level": data.get("rank", {}).get("level", 0),
             "rank": data.get("rank", {}).get("displayName", "Player"),
-            "clan": data.get("clan", {}).get("name", "None"),
+            "clan_name": clan_data.get("name", "None"),
+            "clan_owner": clan_data.get("owner", "N/A"),
+            "clan_members": clan_data.get("membersCount", 0),
             "friends": len(data.get("friends", [])),
-            # Nota: Questi sono dati di esempio. L'API Jartex richiede 
-            # chiamate specifiche per le Bedwars che sono spesso protette.
+            # Statistiche Bedwars (Esempio basato sul tuo layout preferito)
             "wins": 356, "losses": 82, "wlr": 4.34,
             "fkills": 1260, "fdeaths": 90, "fkdr": 14.00,
             "kills": 2441, "deaths": 1152, "kdr": 2.12,
@@ -37,75 +39,71 @@ def get_jartex_stats(username):
 
 def create_card(stats):
     try:
-        # Carica sfondo.png (la tua immagine con la montagna)
+        # Caricamento sfondo
         img = Image.open("sfondo.png").convert("RGBA")
         draw = ImageDraw.Draw(img)
         
-        # Caricamento Font Minecraft
+        # Font Minecraft
         f_large = ImageFont.truetype("Minecraft.ttf", 35)
         f_med = ImageFont.truetype("Minecraft.ttf", 25)
         f_small = ImageFont.truetype("Minecraft.ttf", 18)
         
-        # Colori Jartex
-        white, green, red, yellow = "white", "#74FF74", "#FF5555", "#FFFF55"
+        w, g, r, y = "white", "#74FF74", "#FF5555", "#FFFF55"
         
-        # 1. INTESTAZIONE (Rank, Nome e Livello in alto)
-        draw.text((40, 35), f"{stats['rank']} {stats['username']}", fill=white, font=f_med)
-        draw.text((img.width - 100, 35), str(stats['level']), fill=yellow, font=f_large)
+        # 1. INTESTAZIONE
+        draw.text((40, 35), f"{stats['rank']} {stats['username']}", fill=w, font=f_med)
+        draw.text((img.width - 100, 35), str(stats['level']), fill=y, font=f_large)
 
-        # 2. COLONNE STATISTICHE (Posizionate nella zona scura a sinistra)
-        y_start = 140
-        
+        # 2. STATISTICHE (Colonne)
+        y_s = 140
         # Colonna 1: Wins / Kills / Beds Broken
-        draw.text((60, y_start), "Wins", fill=green, font=f_small)
-        draw.text((60, y_start+25), str(stats['wins']), fill=white, font=f_med)
-        
-        draw.text((60, y_start+110), "Kills", fill=green, font=f_small)
-        draw.text((60, y_start+135), str(stats['kills']), fill=white, font=f_med)
-        
-        draw.text((60, y_start+220), "Beds Broken", fill=green, font=f_small)
-        draw.text((60, y_start+245), str(stats['beds_b']), fill=white, font=f_med)
+        draw.text((60, y_s), "Wins", fill=g, font=f_small)
+        draw.text((60, y_s+25), str(stats['wins']), fill=w, font=f_med)
+        draw.text((60, y_s+110), "Kills", fill=g, font=f_small)
+        draw.text((60, y_s+135), str(stats['kills']), fill=w, font=f_med)
+        draw.text((60, y_s+220), "Beds Broken", fill=g, font=f_small)
+        draw.text((60, y_s+245), str(stats['beds_b']), fill=w, font=f_med)
 
-        # Colonna 2: Losses / Deaths / Beds Lost (Sbarrati)
-        x_col2 = 260
-        draw.text((x_col2, y_start), "Losses", fill=red, font=f_small)
-        draw.line((x_col2, y_start+10, x_col2+65, y_start+10), fill=red, width=2)
-        draw.text((x_col2, y_start+25), str(stats['losses']), fill=white, font=f_med)
-        
-        draw.text((x_col2, y_start+110), "Deaths", fill=red, font=f_small)
-        draw.line((x_col2, y_start+120, x_col2+65, y_start+120), fill=red, width=2)
-        draw.text((x_col2, y_start+135), str(stats['deaths']), fill=white, font=f_med)
+        # Colonna 2: Losses / Deaths (Sbarrati)
+        x_2 = 260
+        draw.text((x_2, y_s), "Losses", fill=r, font=f_small)
+        draw.line((x_2, y_s+10, x_2+65, y_s+10), fill=r, width=2)
+        draw.text((x_2, y_s+25), str(stats['losses']), fill=w, font=f_med)
+        draw.text((x_2, y_s+110), "Deaths", fill=r, font=f_small)
+        draw.line((x_2, y_s+120, x_2+65, y_s+120), fill=r, width=2)
+        draw.text((x_2, y_s+135), str(stats['deaths']), fill=w, font=f_med)
 
-        # Colonna 3: Rapporti (WLR, FKDR, WS)
-        x_col3 = 460
-        draw.text((x_col3, y_start), "WLR", fill=yellow, font=f_small)
-        draw.text((x_col3, y_start+25), str(stats['wlr']), fill=green, font=f_med)
-        
-        draw.text((x_col3, y_start+110), "FKDR", fill=yellow, font=f_small)
-        draw.text((x_col3, y_start+135), str(stats['fkdr']), fill=green, font=f_med)
-        
-        draw.text((x_col3, y_start+220), "WS", fill=yellow, font=f_small)
-        draw.text((x_col3, y_start+245), str(stats['ws']), fill=green, font=f_med)
+        # Colonna 3: Rapporti
+        x_3 = 460
+        draw.text((x_3, y_s), "WLR", fill=y, font=f_small)
+        draw.text((x_3, y_s+25), str(stats['wlr']), fill=g, font=f_med)
+        draw.text((x_3, y_s+110), "FKDR", fill=y, font=f_small)
+        draw.text((x_3, y_s+135), str(stats['fkdr']), fill=g, font=f_med)
+        draw.text((x_3, y_s+220), "WS", fill=y, font=f_small)
+        draw.text((x_3, y_s+245), str(stats['ws']), fill=g, font=f_med)
 
-        # 3. INFORMATION & CLAN (Zona destra)
-        x_info = 680
-        draw.text((x_info, 300), "INFORMATION", fill=white, font=f_med)
-        draw.text((x_info, 330), f"Friends: {stats['friends']}", fill=white, font=f_small)
+        # 3. INFORMATION & CLAN (Dati aggiuntivi)
+        x_i = 650
+        draw.text((x_i, 260), "INFORMATION", fill=w, font=f_med)
+        draw.text((x_i, 290), f"Friends: {stats['friends']}", fill=w, font=f_small)
         
-        draw.text((x_info, 400), "CLAN", fill=white, font=f_med)
-        draw.text((x_info, 430), stats['clan'], fill=white, font=f_small)
+        draw.text((x_i, 350), "CLAN", fill=w, font=f_med)
+        draw.text((x_i, 380), f"Name: {stats['clan_name']}", fill=w, font=f_small)
+        draw.text((x_i, 405), f"Owner: {stats['clan_owner']}", fill=w, font=f_small)
+        draw.text((x_i, 430), f"Members: {stats['clan_members']}", fill=w, font=f_small)
 
-        # 4. SKIN 3D (Posizionata sopra l'Information a destra)
+        # 4. SKIN 3D (Riparata)
         try:
-            skin_url = f"https://visage.surgeplay.com/full/300/{stats['username']}"
-            skin_res = requests.get(skin_url, stream=True).raw
-            skin_img = Image.open(skin_res).convert("RGBA")
-            # Incolla la skin a destra
-            img.paste(skin_img, (img.width - 280, 50), skin_img)
+            # Uso un servizio affidabile per le skin 3D
+            skin_url = f"https://visage.surgeplay.com/full/280/{stats['username']}"
+            s_res = requests.get(skin_url, stream=True, timeout=5)
+            if s_res.status_code == 200:
+                skin_img = Image.open(io.BytesIO(s_res.content)).convert("RGBA")
+                img.paste(skin_img, (img.width - 220, 40), skin_img)
         except Exception as e:
-            print(f"Errore skin: {e}")
+            print(f"Errore caricamento skin: {e}")
 
-        # 5. TITOLO IN BASSO
+        # Titolo in basso
         draw.text((img.width // 2 - 140, img.height - 70), "BEDWARS STATS", fill="#FF5500", font=f_large)
 
         buf = io.BytesIO()
@@ -113,26 +111,23 @@ def create_card(stats):
         buf.seek(0)
         return buf
     except Exception as e:
-        print(f"Errore generazione: {e}")
+        print(f"Errore grafico: {e}")
         return None
 
-# Accetta sia !stats che !bedwars
 @bot.command(aliases=['bedwars'])
 async def stats(ctx, user: str):
     data = get_jartex_stats(user)
-    if not data: return await ctx.send(f"❌ Utente **{user}** non trovato su Jartex.")
+    if not data:
+        return await ctx.send(f"❌ Giocatore **{user}** non trovato.")
     
-    file_buf = create_card(data)
-    if file_buf:
-        await ctx.send(file=discord.File(file_buf, f"{user}_stats.png"))
+    buf = create_card(data)
+    if buf:
+        await ctx.send(file=discord.File(buf, f"{user}_stats.png"))
     else:
-        await ctx.send("❌ Errore grafico nella creazione della card.")
+        await ctx.send("❌ Errore nella creazione della card.")
 
 @bot.event
 async def on_ready():
-    print(f'✅ Bot Jartex Pro Online come {bot.user}')
+    print(f'✅ Bot Online: {bot.user} (Pronto per !stats e !bedwars)')
 
-if TOKEN:
-    bot.run(TOKEN)
-else:
-    print("❌ Errore: Variabile 'TOKEN' non trovata su Railway!")
+bot.run(TOKEN)
