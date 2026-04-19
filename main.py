@@ -12,40 +12,48 @@ TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-API_BASE = "https://stats.jartexnetwork.com/api"
+API = "https://stats.jartexnetwork.com/api/profile/"
 
 # ---------------- API ---------------- #
 
-async def fetch_json(url):
+async def fetch_player(user):
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as r:
+        async with session.get(API + user) as r:
             if r.status == 200:
                 return await r.json()
             return None
 
-# ---------------- PARSER FIX DEFINITIVO ---------------- #
+# ---------------- PARSER SUPER FIX ---------------- #
 
-def parse_bedwars(data, mode="ALL_MODES", interval="total"):
+def parse_stats(data, mode="ALL_MODES"):
     try:
         bw = data.get("stats", {}).get("BedWars", {})
 
-        interval_map = {
-            "weekly": "weekly",
-            "monthly": "monthly",
-            "total": "alltime"
-        }
-
-        i = interval_map.get(interval.lower(), "alltime")
-        time_data = bw.get(i, {})
-
-        modes_real = {
+        # modalità reali
+        modes = {
             "SOLO": "solos",
             "DOUBLES": "doubles",
             "QUADS": "teams_of_four"
         }
 
-        # 🔥 ALL MODES = somma reale
+        # -----------------------
+        # PRENDI DATI
+        # -----------------------
+
+        # 1. prova alltime
+        alltime = bw.get("alltime", {})
+
+        # 2. fallback root (IMPORTANTISSIMO)
+        root = bw
+
+        def get_mode_stats(source, key):
+            return source.get(key, {}) if source else {}
+
+        # -----------------------
+        # ALL MODES
+        # -----------------------
         if mode.upper() == "ALL_MODES":
+
             total = {
                 "wins": 0,
                 "losses": 0,
@@ -56,18 +64,28 @@ def parse_bedwars(data, mode="ALL_MODES", interval="total"):
             }
 
             for m in ["solos", "doubles", "teams_of_four"]:
-                s = time_data.get(m, {})
+                s = get_mode_stats(alltime, m)
+
+                # fallback root se vuoto
+                if not s:
+                    s = get_mode_stats(root, m)
+
                 for k in total:
                     total[k] += s.get(k, 0)
 
             stats = total
-        else:
-            key = modes_real.get(mode.upper(), "solos")
-            stats = time_data.get(key, {})
 
-        # fallback
-        if not stats or stats.get("wins", 0) == 0:
-            stats = bw.get("alltime", {}).get("overall", {})
+        else:
+            key = modes.get(mode.upper(), "solos")
+
+            stats = get_mode_stats(alltime, key)
+
+            if not stats:
+                stats = get_mode_stats(root, key)
+
+        # ultimo fallback
+        if not stats:
+            stats = get_mode_stats(alltime, "overall") or get_mode_stats(root, "overall")
 
         wins = stats.get("wins", 0)
         losses = stats.get("losses", 0)
@@ -86,7 +104,7 @@ def parse_bedwars(data, mode="ALL_MODES", interval="total"):
         }
 
     except Exception as e:
-        print("Parse error:", e)
+        print("PARSE ERROR:", e)
         return None
 
 # ---------------- CARD ---------------- #
@@ -108,7 +126,6 @@ def draw_card(profile, stats, mode):
         user = profile.get("username", "Unknown")
         level = profile.get("rank", {}).get("level", 0)
 
-        # HEADER
         draw.text((40, 30), user, fill=white, font=f_mid)
         draw.text((900, 20), str(level), fill=gold, font=f_big)
 
@@ -116,7 +133,6 @@ def draw_card(profile, stats, mode):
             draw.text((x, y), name, fill=color, font=f_small)
             draw.text((x, y+25), str(value), fill=white, font=f_mid)
 
-        # GRID
         stat(80, 140, "WINS", stats["wins"], green)
         stat(260, 140, "LOSSES", stats["losses"], red)
         stat(440, 140, "WLR", stats["wlr"], gold)
@@ -128,8 +144,7 @@ def draw_card(profile, stats, mode):
         stat(80, 380, "BEDS", stats["beds"], green)
         stat(440, 380, "STREAK", stats["streak"], gold)
 
-        # FOOTER
-        draw.text((400, 520), f"{mode.upper()}", fill=gold, font=f_mid)
+        draw.text((400, 520), mode.upper(), fill=gold, font=f_mid)
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -137,39 +152,30 @@ def draw_card(profile, stats, mode):
         return buf
 
     except Exception as e:
-        print("Render error:", e)
+        print("CARD ERROR:", e)
         return None
 
 # ---------------- COMMAND ---------------- #
 
-@bot.tree.command(name="bw", description="Mostra stats Bedwars")
-@app_commands.describe(
-    user="Nome player",
-    mode="SOLO / DOUBLES / QUADS / ALL_MODES",
-    interval="weekly / monthly / total"
-)
-async def bw(interaction: discord.Interaction, user: str, mode: str = "ALL_MODES", interval: str = "total"):
+@bot.tree.command(name="bw")
+async def bw(interaction: discord.Interaction, user: str, mode: str = "ALL_MODES"):
 
     await interaction.response.defer()
 
-    profile = await fetch_json(f"{API_BASE}/profile/{user}")
+    data = await fetch_player(user)
 
-    if not profile:
+    if not data:
         await interaction.followup.send("❌ Player non trovato")
         return
 
-    stats = parse_bedwars(profile, mode, interval)
+    stats = parse_stats(data, mode)
 
     if not stats:
         await interaction.followup.send("❌ Nessuna stats trovata")
         return
 
     loop = asyncio.get_running_loop()
-    img = await loop.run_in_executor(None, draw_card, profile, stats, mode)
-
-    if not img:
-        await interaction.followup.send("❌ Errore immagine")
-        return
+    img = await loop.run_in_executor(None, draw_card, data, stats, mode)
 
     await interaction.followup.send(file=discord.File(img, f"{user}.png"))
 
@@ -178,8 +184,6 @@ async def bw(interaction: discord.Interaction, user: str, mode: str = "ALL_MODES
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"✅ Bot online: {bot.user}")
-
-# ---------------- START ---------------- #
+    print("BOT ONLINE")
 
 bot.run(TOKEN)
