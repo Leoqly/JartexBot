@@ -23,36 +23,49 @@ async def fetch_json(url):
                 return await r.json()
             return None
 
-# ---------------- PARSER FIXATO ---------------- #
+# ---------------- PARSER FIX DEFINITIVO ---------------- #
 
-def parse_bedwars(data, mode="overall", interval="alltime"):
+def parse_bedwars(data, mode="ALL_MODES", interval="total"):
     try:
         bw = data.get("stats", {}).get("BedWars", {})
-
-        mode_map = {
-            "SOLO": "solos",
-            "DOUBLES": "doubles",
-            "QUADS": "teams_of_four",
-            "ALL_MODES": "overall",
-            "overall": "overall"
-        }
 
         interval_map = {
             "weekly": "weekly",
             "monthly": "monthly",
-            "total": "alltime",
-            "alltime": "alltime"
+            "total": "alltime"
         }
 
-        m = mode_map.get(mode.upper(), "overall")
         i = interval_map.get(interval.lower(), "alltime")
+        time_data = bw.get(i, {})
 
-        stats = bw.get(i, {}).get(m, {})
+        modes_real = {
+            "SOLO": "solos",
+            "DOUBLES": "doubles",
+            "QUADS": "teams_of_four"
+        }
 
-        # fallback per evitare 0 falsi
-        if not stats or stats.get("wins", 0) == 0:
-            stats = bw.get("alltime", {}).get(m, {})
+        # 🔥 ALL MODES = somma reale
+        if mode.upper() == "ALL_MODES":
+            total = {
+                "wins": 0,
+                "losses": 0,
+                "kills": 0,
+                "deaths": 0,
+                "beds_destroyed": 0,
+                "current_streak": 0
+            }
 
+            for m in ["solos", "doubles", "teams_of_four"]:
+                s = time_data.get(m, {})
+                for k in total:
+                    total[k] += s.get(k, 0)
+
+            stats = total
+        else:
+            key = modes_real.get(mode.upper(), "solos")
+            stats = time_data.get(key, {})
+
+        # fallback
         if not stats or stats.get("wins", 0) == 0:
             stats = bw.get("alltime", {}).get("overall", {})
 
@@ -99,7 +112,6 @@ def draw_card(profile, stats, mode):
         draw.text((40, 30), user, fill=white, font=f_mid)
         draw.text((900, 20), str(level), fill=gold, font=f_big)
 
-        # funzione stat
         def stat(x, y, name, value, color):
             draw.text((x, y), name, fill=color, font=f_small)
             draw.text((x, y+25), str(value), fill=white, font=f_mid)
@@ -128,7 +140,7 @@ def draw_card(profile, stats, mode):
         print("Render error:", e)
         return None
 
-# ---------------- SLASH COMMAND ---------------- #
+# ---------------- COMMAND ---------------- #
 
 @bot.tree.command(name="bw", description="Mostra stats Bedwars")
 @app_commands.describe(
