@@ -23,29 +23,38 @@ async def fetch_json(url):
                 return await r.json()
             return None
 
-# ---------------- STATS ---------------- #
+# ---------------- PARSER FIXATO ---------------- #
 
-def parse_bedwars(data, mode="ALL_MODES", interval="total"):
+def parse_bedwars(data, mode="overall", interval="alltime"):
     try:
-        bw = data["stats"]["BedWars"]
+        bw = data.get("stats", {}).get("BedWars", {})
 
         mode_map = {
-            "SOLO": "solo",
-            "DOUBLES": "double",
-            "QUADS": "quad",
-            "ALL_MODES": "overall"
+            "SOLO": "solos",
+            "DOUBLES": "doubles",
+            "QUADS": "teams_of_four",
+            "ALL_MODES": "overall",
+            "overall": "overall"
         }
 
         interval_map = {
             "weekly": "weekly",
             "monthly": "monthly",
-            "total": "alltime"
+            "total": "alltime",
+            "alltime": "alltime"
         }
 
         m = mode_map.get(mode.upper(), "overall")
         i = interval_map.get(interval.lower(), "alltime")
 
         stats = bw.get(i, {}).get(m, {})
+
+        # fallback per evitare 0 falsi
+        if not stats or stats.get("wins", 0) == 0:
+            stats = bw.get("alltime", {}).get(m, {})
+
+        if not stats or stats.get("wins", 0) == 0:
+            stats = bw.get("alltime", {}).get("overall", {})
 
         wins = stats.get("wins", 0)
         losses = stats.get("losses", 0)
@@ -83,18 +92,19 @@ def draw_card(profile, stats, mode):
         green = "#55FF55"
         red = "#FF5555"
 
-        user = profile["username"]
+        user = profile.get("username", "Unknown")
         level = profile.get("rank", {}).get("level", 0)
 
         # HEADER
         draw.text((40, 30), user, fill=white, font=f_mid)
         draw.text((900, 20), str(level), fill=gold, font=f_big)
 
-        # STATS GRID
+        # funzione stat
         def stat(x, y, name, value, color):
             draw.text((x, y), name, fill=color, font=f_small)
             draw.text((x, y+25), str(value), fill=white, font=f_mid)
 
+        # GRID
         stat(80, 140, "WINS", stats["wins"], green)
         stat(260, 140, "LOSSES", stats["losses"], red)
         stat(440, 140, "WLR", stats["wlr"], gold)
@@ -107,7 +117,7 @@ def draw_card(profile, stats, mode):
         stat(440, 380, "STREAK", stats["streak"], gold)
 
         # FOOTER
-        draw.text((400, 520), f"MODE: {mode}", fill=gold, font=f_mid)
+        draw.text((400, 520), f"{mode.upper()}", fill=gold, font=f_mid)
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -118,9 +128,9 @@ def draw_card(profile, stats, mode):
         print("Render error:", e)
         return None
 
-# ---------------- COMMAND ---------------- #
+# ---------------- SLASH COMMAND ---------------- #
 
-@bot.tree.command(name="bw", description="Stats Bedwars")
+@bot.tree.command(name="bw", description="Mostra stats Bedwars")
 @app_commands.describe(
     user="Nome player",
     mode="SOLO / DOUBLES / QUADS / ALL_MODES",
@@ -156,7 +166,7 @@ async def bw(interaction: discord.Interaction, user: str, mode: str = "ALL_MODES
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"✅ Online: {bot.user}")
+    print(f"✅ Bot online: {bot.user}")
 
 # ---------------- START ---------------- #
 
