@@ -12,35 +12,31 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Mappa per tradurre i termini dell'utente in chiavi API Jartex
+# Mappatura modalità Jartex
 MODE_MAP = {
-    "overall": "overall", "solo": "solos", "solos": "solos",
+    "solo": "solos", "solos": "solos",
     "double": "doubles", "doubles": "doubles",
-    "quad": "teams_of_four", "quads": "teams_of_four", "threes": "teams_of_three"
+    "quad": "teams_of_four", "quads": "teams_of_four",
+    "overall": "overall"
 }
 
-def get_level_color(level):
-    if level < 30: return "#FFFFFF"
-    if level < 60: return "#55FF55"
-    if level < 90: return "#FFAA00"
-    if level < 120: return "#FF5555"
-    return "#AA00AA"
-
-def extract_bw_stats(data, interval, mode):
-    """Estrae i dati con sistema di fallback per evitare gli '0'."""
+def get_stats_safely(data, interval, mode):
+    """Scava nel JSON di Jartex per trovare i dati reali."""
     bw_root = data.get("stats", {}).get("BedWars", {})
     
-    # Prova a prendere l'intervallo richiesto (weekly/monthly/alltime)
+    # Navigazione gerarchica: [interval][mode]
+    # Se chiedi weekly quads, cerca in bw_root['weekly']['teams_of_four']
     time_node = bw_root.get(interval, {})
-    if not time_node and interval != "alltime":
-        time_node = bw_root.get("alltime", {}) # Fallback se l'intervallo è vuoto
-
     mode_key = MODE_MAP.get(mode.lower(), "overall")
     stats = time_node.get(mode_key, {})
 
-    # Se dopo il filtro è ancora tutto vuoto, prendiamo i dati globali del profilo
-    if not stats or stats.get("wins") is None:
-        stats = bw_root.get("overall", {})
+    # Se i dati sono 0 o mancanti, prova il fallback su 'alltime' dello stesso tipo
+    if not stats or stats.get("wins", 0) == 0:
+        stats = bw_root.get("alltime", {}).get(mode_key, {})
+    
+    # Se è ancora tutto 0, prendi i dati generali 'overall'
+    if not stats or stats.get("wins", 0) == 0:
+        stats = bw_root.get("alltime", {}).get("overall", {})
 
     return {
         "wins": stats.get("wins", 0),
@@ -55,54 +51,57 @@ def extract_bw_stats(data, interval, mode):
 
 def create_card(profile, interval, mode):
     try:
-        bw = extract_bw_stats(profile, interval, mode)
+        s = get_stats_safely(profile, interval, mode)
         base = Image.open("sfondo.png").convert("RGBA")
         
-        # Overlay Box
+        # Disegno Box
         overlay = Image.new("RGBA", base.size, (0,0,0,0))
         d_ov = ImageDraw.Draw(overlay)
-        d_ov.rectangle([40, 115, 610, 470], fill=(0, 0, 0, 135)) 
-        d_ov.rectangle([635, 115, 985, 470], fill=(0, 0, 0, 165))
+        d_ov.rectangle([40, 115, 610, 470], fill=(0, 0, 0, 140)) # Box Stats
+        d_ov.rectangle([640, 115, 980, 470], fill=(0, 0, 0, 170)) # Box Info
         base = Image.alpha_composite(base, overlay)
         
         draw = ImageDraw.Draw(base)
         f_title = ImageFont.truetype("Minecraft.ttf", 40)
         f_head = ImageFont.truetype("Minecraft.ttf", 26)
-        f_val = ImageFont.truetype("Minecraft.ttf", 22)
+        f_data = ImageFont.truetype("Minecraft.ttf", 22)
         f_small = ImageFont.truetype("Minecraft.ttf", 16)
         
         gold, green, red, white = "#FFAA00", "#55FF55", "#FF5555", "#FFFFFF"
 
-        # Header
+        # Intestazione Nome e Livello
+        user = profile.get("username", "Unknown")
         lvl = profile.get("rank", {}).get("level", 0)
-        draw.text((50, 40), f"{profile.get('username')}", fill=white, font=f_head)
-        draw.text((base.width - 120, 35), str(lvl), fill=get_level_color(lvl), font=f_title)
+        draw.text((50, 40), f"{profile.get('rank', {}).get('displayName', 'Player')} {user}", fill=white, font=f_head)
+        draw.text((base.width - 120, 35), str(lvl), fill=gold, font=f_title)
 
-        # Griglia Stats
+        # Griglia Stats Reali
         grid = [
-            (80, 145, "WINS", bw['wins'], green), (270, 145, "LOSSES", bw['losses'], red), (460, 145, "WLR", bw['wlr'], gold),
-            (80, 265, "KILLS", bw['kills'], green), (270, 265, "DEATHS", bw['deaths'], red), (460, 265, "FKDR", bw['fkdr'], gold),
-            (80, 385, "BEDS BROKEN", bw['beds'], green), (460, 385, "STREAK", bw['ws'] if 'ws' in bw else bw['streak'], gold)
+            (80, 145, "WINS", s['wins'], green), (270, 145, "LOSSES", s['losses'], red), (460, 145, "WLR", s['wlr'], gold),
+            (80, 265, "KILLS", s['kills'], green), (270, 265, "DEATHS", s['deaths'], red), (460, 265, "FKDR", s['fkdr'], gold),
+            (80, 385, "BEDS BROKEN", s['beds'], green), (460, 385, "STREAK", s['streak'], gold)
         ]
         for x, y, lbl, val, col in grid:
             draw.text((x, y), lbl, fill=col, font=f_small)
-            draw.text((x, y+22), str(val), fill=white, font=f_val)
+            draw.text((x, y+22), str(val), fill=white, font=f_data)
 
-        # Sezione Clan reale
+        # Clan & Information
         clan = profile.get("clan", {})
         leader = "N/A"
-        if clan.get("owner"):
-            leader = clan["owner"].get("username", "N/A") if isinstance(clan["owner"], dict) else clan["owner"]
-        
+        if isinstance(clan.get("owner"), dict):
+            leader = clan["owner"].get("username", "N/A")
+        elif clan.get("owner"):
+            leader = str(clan["owner"])
+
         draw.text((660, 140), "INFORMATION", fill=gold, font=f_head)
-        draw.text((660, 185), f"Friends: {len(profile.get('friends', []))}", fill=white, font=f_val)
+        draw.text((660, 185), f"Friends: {len(profile.get('friends', []))}", fill=white, font=f_data)
         draw.text((660, 265), "CLAN", fill=gold, font=f_head)
         draw.text((660, 305), f"Tag: {clan.get('name', 'None')}", fill=white, font=f_small)
         draw.text((660, 335), f"Leader: {leader}", fill=white, font=f_small)
         draw.text((660, 365), f"Members: {clan.get('membersCount', 'N/A')}", fill=white, font=f_small)
 
-        # Footer
-        footer = f"BW {interval.upper()} {mode.upper()}"
+        # Footer Dinamico
+        footer = f"BEDWARS {interval.upper()} {mode.upper()}"
         draw.text((base.width//2 - 130, base.height - 70), footer, fill=gold, font=f_head)
 
         buf = io.BytesIO()
@@ -110,15 +109,17 @@ def create_card(profile, interval, mode):
         buf.seek(0)
         return buf
     except Exception as e:
-        print(f"Errore: {e}")
+        print(f"Errore generazione: {e}")
         return None
+
+# --- COMANDI ---
 
 @bot.command(aliases=['bw'])
 async def bedwars(ctx, user: str, *args):
     interval = next((a for a in args if a.lower() in ["weekly", "monthly", "alltime"]), "alltime")
     mode = next((a for a in args if a.lower() in ["solo", "solos", "double", "doubles", "quad", "quads"]), "overall")
 
-    msg = await ctx.send(f"⏳ Analisi Jartex per **{user}**...")
+    msg = await ctx.send(f"🛰️ Recupero stats **{interval} {mode}** per {user}...")
     
     r = requests.get(f"https://stats.jartexnetwork.com/api/profile/{user}")
     if r.status_code == 200:
@@ -128,21 +129,35 @@ async def bedwars(ctx, user: str, *args):
         await msg.delete()
         await ctx.send(file=discord.File(buf, f"{user}.png"))
     else:
-        await msg.edit(content="❌ Utente non trovato.")
+        await msg.edit(content="❌ Giocatore non trovato.")
+
+@bot.command()
+async def clan(ctx, user: str):
+    r = requests.get(f"https://stats.jartexnetwork.com/api/profile/{user}")
+    if r.status_code == 200:
+        c = r.json().get("clan", {})
+        if c.get("name"):
+            owner = c.get("owner", {})
+            leader = owner.get("username", "N/A") if isinstance(owner, dict) else str(owner)
+            embed = discord.Embed(title=f"🛡️ Clan: {c['name']}", color=0x55FF55)
+            embed.add_field(name="Leader", value=leader, inline=True)
+            embed.add_field(name="Membri", value=c.get("membersCount", "N/A"), inline=True)
+            await ctx.send(embed=embed)
+        else: await ctx.send("❌ Il giocatore non è in un clan.")
+    else: await ctx.send("❌ Errore API.")
 
 @bot.command()
 async def top(ctx):
     try:
-        # Recupero classifica REALE
-        lb = requests.get("https://stats.jartexnetwork.com/api/leaderboards/BedWars/wins/alltime").json()[:10]
-        embed = discord.Embed(title="🏆 Jartex Bedwars Top 10", color=0xFFAA00)
+        # Recupero classifica REALE Bedwars Wins
+        r = requests.get("https://stats.jartexnetwork.com/api/leaderboards/BedWars/wins/alltime")
+        lb = r.json()[:10]
+        embed = discord.Embed(title="🏆 Jartex Global Top 10 Wins", color=0xFFAA00)
         desc = ""
         for i, p in enumerate(lb, 1):
             desc += f"**#{i} {p['username']}** • {p['value']} Wins\n"
         embed.description = desc
-        embed.set_footer(text=f"Aggiornato: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
         await ctx.send(embed=embed)
-    except:
-        await ctx.send("❌ API Classifica non raggiungibile.")
+    except: await ctx.send("❌ Classifica non disponibile.")
 
 bot.run(TOKEN)
