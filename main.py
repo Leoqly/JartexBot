@@ -1,53 +1,51 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
-from PIL import Image, ImageDraw, ImageFont
 import aiohttp
 import asyncio
+from PIL import Image, ImageDraw, ImageFont
 import io
 import os
 
 TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
-intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ------------------ CONFIG ------------------ #
+API_BASE = "https://stats.jartexnetwork.com/api"
 
-MODE_MAP = {
-    "solo": "solo",
-    "solos": "solo",
-    "double": "double",
-    "doubles": "double",
-    "quad": "quad",
-    "quads": "quad",
-    "overall": "overall"
-}
+# ---------------- API ---------------- #
 
-INTERVAL_MAP = {
-    "weekly": "weekly",
-    "monthly": "monthly",
-    "alltime": "alltime"
-}
+async def fetch_json(url):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as r:
+            if r.status == 200:
+                return await r.json()
+            return None
 
-# ------------------ API PARSER FIXATO ------------------ #
+# ---------------- STATS ---------------- #
 
-def extract_stats(data, interval, mode):
+def parse_bedwars(data, mode="ALL_MODES", interval="total"):
     try:
         bw = data["stats"]["BedWars"]
 
-        interval = INTERVAL_MAP.get(interval, "alltime")
-        mode = MODE_MAP.get(mode, "overall")
+        mode_map = {
+            "SOLO": "solo",
+            "DOUBLES": "double",
+            "QUADS": "quad",
+            "ALL_MODES": "overall"
+        }
 
-        # ⚠️ STRUTTURA REALE API JARTEX
-        stats = bw.get(interval, {}).get(mode, {})
+        interval_map = {
+            "weekly": "weekly",
+            "monthly": "monthly",
+            "total": "alltime"
+        }
 
-        # fallback intelligenti
-        if not stats:
-            stats = bw.get("alltime", {}).get(mode, {})
+        m = mode_map.get(mode.upper(), "overall")
+        i = interval_map.get(interval.lower(), "alltime")
 
-        if not stats:
-            stats = bw.get("alltime", {}).get("overall", {})
+        stats = bw.get(i, {}).get(m, {})
 
         wins = stats.get("wins", 0)
         losses = stats.get("losses", 0)
@@ -61,114 +59,105 @@ def extract_stats(data, interval, mode):
             "deaths": deaths,
             "beds": stats.get("beds_destroyed", 0),
             "streak": stats.get("current_streak", 0),
-            "wlr": round(wins / losses, 2) if losses > 0 else wins,
-            "fkdr": round(kills / deaths, 2) if deaths > 0 else kills
+            "wlr": round(wins / losses, 2) if losses else wins,
+            "fkdr": round(kills / deaths, 2) if deaths else kills
         }
 
     except Exception as e:
-        print("ERRORE PARSING:", e)
-        return {
-            "wins": 0, "losses": 0, "kills": 0,
-            "deaths": 0, "beds": 0, "streak": 0,
-            "wlr": 0, "fkdr": 0
-        }
+        print("Parse error:", e)
+        return None
 
-# ------------------ CARD ------------------ #
+# ---------------- CARD ---------------- #
 
-def create_card(data, interval, mode):
+def draw_card(profile, stats, mode):
     try:
-        stats = extract_stats(data, interval, mode)
-
         img = Image.open("sfondo.png").convert("RGBA")
         draw = ImageDraw.Draw(img)
 
-        # font
-        font_big = ImageFont.truetype("Minecraft.ttf", 40)
-        font_mid = ImageFont.truetype("Minecraft.ttf", 22)
-        font_small = ImageFont.truetype("Minecraft.ttf", 16)
+        f_big = ImageFont.truetype("Minecraft.ttf", 42)
+        f_mid = ImageFont.truetype("Minecraft.ttf", 22)
+        f_small = ImageFont.truetype("Minecraft.ttf", 16)
 
         white = "#FFFFFF"
         gold = "#FFAA00"
         green = "#55FF55"
         red = "#FF5555"
 
-        user = data.get("username", "Unknown")
-        level = data.get("rank", {}).get("level", 0)
+        user = profile["username"]
+        level = profile.get("rank", {}).get("level", 0)
 
-        # titolo
-        draw.text((50, 40), user, font=font_mid, fill=white)
-        draw.text((900, 40), str(level), font=font_big, fill=gold)
+        # HEADER
+        draw.text((40, 30), user, fill=white, font=f_mid)
+        draw.text((900, 20), str(level), fill=gold, font=f_big)
 
-        # stats
-        y = 150
+        # STATS GRID
+        def stat(x, y, name, value, color):
+            draw.text((x, y), name, fill=color, font=f_small)
+            draw.text((x, y+25), str(value), fill=white, font=f_mid)
 
-        def stat(x, y, label, value, color):
-            draw.text((x, y), label, font=font_small, fill=color)
-            draw.text((x, y+25), str(value), font=font_mid, fill=white)
+        stat(80, 140, "WINS", stats["wins"], green)
+        stat(260, 140, "LOSSES", stats["losses"], red)
+        stat(440, 140, "WLR", stats["wlr"], gold)
 
-        stat(80, y, "WINS", stats["wins"], green)
-        stat(250, y, "LOSSES", stats["losses"], red)
-        stat(420, y, "WLR", stats["wlr"], gold)
+        stat(80, 260, "KILLS", stats["kills"], green)
+        stat(260, 260, "DEATHS", stats["deaths"], red)
+        stat(440, 260, "FKDR", stats["fkdr"], gold)
 
-        stat(80, y+120, "KILLS", stats["kills"], green)
-        stat(250, y+120, "DEATHS", stats["deaths"], red)
-        stat(420, y+120, "FKDR", stats["fkdr"], gold)
+        stat(80, 380, "BEDS", stats["beds"], green)
+        stat(440, 380, "STREAK", stats["streak"], gold)
 
-        stat(80, y+240, "BEDS", stats["beds"], green)
-        stat(420, y+240, "STREAK", stats["streak"], gold)
-
-        footer = f"{interval.upper()} {mode.upper()}"
-        draw.text((400, 500), footer, font=font_mid, fill=gold)
+        # FOOTER
+        draw.text((400, 520), f"MODE: {mode}", fill=gold, font=f_mid)
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
-
         return buf
 
     except Exception as e:
-        print("ERRORE CARD:", e)
+        print("Render error:", e)
         return None
 
-# ------------------ COMMAND ------------------ #
+# ---------------- COMMAND ---------------- #
 
-@bot.command(aliases=["bw"])
-async def bedwars(ctx, user: str, interval="alltime", mode="overall"):
+@bot.tree.command(name="bw", description="Stats Bedwars")
+@app_commands.describe(
+    user="Nome player",
+    mode="SOLO / DOUBLES / QUADS / ALL_MODES",
+    interval="weekly / monthly / total"
+)
+async def bw(interaction: discord.Interaction, user: str, mode: str = "ALL_MODES", interval: str = "total"):
 
-    msg = await ctx.send("🔄 Caricamento...")
+    await interaction.response.defer()
 
-    url = f"https://stats.jartexnetwork.com/api/profile/{user}"
+    profile = await fetch_json(f"{API_BASE}/profile/{user}")
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as r:
+    if not profile:
+        await interaction.followup.send("❌ Player non trovato")
+        return
 
-                if r.status != 200:
-                    await msg.edit(content="❌ Player non trovato")
-                    return
+    stats = parse_bedwars(profile, mode, interval)
 
-                data = await r.json()
+    if not stats:
+        await interaction.followup.send("❌ Nessuna stats trovata")
+        return
 
-        loop = asyncio.get_running_loop()
-        img = await loop.run_in_executor(None, create_card, data, interval, mode)
+    loop = asyncio.get_running_loop()
+    img = await loop.run_in_executor(None, draw_card, profile, stats, mode)
 
-        if not img:
-            await msg.edit(content="❌ Errore generazione")
-            return
+    if not img:
+        await interaction.followup.send("❌ Errore immagine")
+        return
 
-        await msg.delete()
-        await ctx.send(file=discord.File(img, f"{user}.png"))
+    await interaction.followup.send(file=discord.File(img, f"{user}.png"))
 
-    except Exception as e:
-        print("ERRORE:", e)
-        await msg.edit(content="❌ Errore API")
-
-# ------------------ READY ------------------ #
+# ---------------- READY ---------------- #
 
 @bot.event
 async def on_ready():
-    print(f"✅ Bot online: {bot.user}")
+    await bot.tree.sync()
+    print(f"✅ Online: {bot.user}")
 
-# ------------------ START ------------------ #
+# ---------------- START ---------------- #
 
 bot.run(TOKEN)
